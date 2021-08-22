@@ -126,6 +126,13 @@ void WolvenKitWriter::Write(Global& aGlobal)
     m_enumWriter << "\t{" << std::endl;
 }
 
+RED4ext::IScriptable* WolvenKitWriter::GetDefaultInstance(RED4ext::CClass* cls)
+{
+    using func_t = RED4ext::IScriptable* (*)(RED4ext::CClass*);
+    RED4ext::RelocFunc<func_t> func(0x21C650); // 40 56 48 83 EC 30 48 8B 81 E0 00 00 00 48 8B F1
+    return func(cls);
+}
+
 void WolvenKitWriter::Write(std::shared_ptr<Class> aClass)
 {
     auto dir = m_dir / L"classes";
@@ -171,7 +178,7 @@ void WolvenKitWriter::Write(std::shared_ptr<Class> aClass)
     file << "{" << std::endl;
     file << "\t[REDMeta]" << std::endl;
 
-    file << "\tpublic class " << name << " : ";
+    file << "\tpublic partial class " << name << " : ";
     if (aClass->parent)
     {
         auto parent = GetWolvenType(aClass->parent->name.ToString());
@@ -191,6 +198,13 @@ void WolvenKitWriter::Write(std::shared_ptr<Class> aClass)
         ordinal = 1000;
     }
 
+    RED4ext::IScriptable* inst;
+    if (!aClass->props.empty())
+    {
+        //inst = GetDefaultInstance(aClass->raw);
+        inst = aClass->raw->AllocInstance();
+    }
+
     for (auto prop : aClass->props)
     {
         auto csType = GetCSType(prop->type);
@@ -202,12 +216,24 @@ void WolvenKitWriter::Write(std::shared_ptr<Class> aClass)
             name += "_" + std::to_string(prop->valueOffset);
         }
 
-        file << "\t\tprivate " << csType << " _" << name << ";" << std::endl;
+        file << "\t\tprivate " << csType << " _" << name;
+
+        if (inst)
+        {
+            std::string value = GetDefaultValue(prop, inst);
+            if (!value.empty())
+            {
+                file << " = " << value;
+            }
+        }
+
+        file << ";" << std::endl;
     }
 
     file << std::endl;
 
     // We want to write them as they are in the RTTI type, not orderd by offset.
+    std::unordered_set<std::string> ord_lst;
     for (auto prop : aClass->props)
     {
         if (skippedOrdinals != m_skippedOrdinals.end())
@@ -219,7 +245,7 @@ void WolvenKitWriter::Write(std::shared_ptr<Class> aClass)
             }
         }
 
-        Write(file, prop, ordinal++);
+        Write(file, prop, &ord_lst, ordinal++);
     }
 
     if (elem != m_customClasses.end())
@@ -231,6 +257,25 @@ void WolvenKitWriter::Write(std::shared_ptr<Class> aClass)
 
     file << "\t\tpublic " << name
          << "(IRed4EngineFile cr2w, CVariable parent, string name) : base(cr2w, parent, name) { }" << std::endl;
+
+    file << "\t\tprotected override OrdinalDict GetPropertyOrder()" << std::endl;
+    file << "\t\t{" << std::endl;
+    file << "\t\t\tvar dict = base.GetPropertyOrder();" << std::endl;
+    if (!ord_lst.empty())
+    {
+        file << std::endl;
+    }
+    for (auto ord : ord_lst)
+    {
+        file << ord;
+    }
+    file << std::endl;
+    file << "\t\t\tPatchPropertyOrder(dict);" << std::endl;
+    file << std::endl;
+    file << "\t\t\treturn dict;" << std::endl;
+    file << "\t\t}" << std::endl;
+    file << std::endl;
+    file << "\t\tpartial void PatchPropertyOrder(OrdinalDict dict);" << std::endl;
 
     file << "\t}" << std::endl;
     file << "}" << std::endl;
@@ -508,7 +553,7 @@ void WolvenKitWriter::Write(std::fstream& aFile, RED4ext::CBaseRTTIType* aType)
     }
 }
 
-void WolvenKitWriter::Write(std::fstream& aFile, RED4ext::CProperty* aProperty, size_t aOrdinal)
+void WolvenKitWriter::Write(std::fstream& aFile, RED4ext::CProperty* aProperty, std::unordered_set<std::string>* aOrdLst, size_t aOrdinal)
 {
     std::string orgName = aProperty->name.ToString();
 
@@ -535,21 +580,20 @@ void WolvenKitWriter::Write(std::fstream& aFile, RED4ext::CProperty* aProperty, 
         name += "_";
     }
 
-    aFile << name;
-
     if (CheckForDuplicate(parent, aProperty))
     {
         // Do not append "_" twice.
         if (name[name.size() - 1] != '_')
         {
-            aFile << "_";
+            name += "_";
         }
 
         privateName += "_" + std::to_string(aProperty->valueOffset);
-        aFile << aProperty->valueOffset;
+        name += std::to_string(aProperty->valueOffset);
     }
 
-    auto typeName = aProperty->type->GetName();
+    aFile << name;
+    aOrdLst->emplace("\t\t\tdict.Add(nameof(" + name + "), " + std::to_string(aOrdinal) + ");\n");
 
     aFile << std::endl;
     aFile << "\t\t{" << std::endl;
@@ -655,6 +699,438 @@ std::string WolvenKitWriter::GetCSType(RED4ext::CBaseRTTIType* aType)
         return name;
     }
     }
+}
+
+std::string WolvenKitWriter::GetDefaultValue(RED4ext::CProperty* aProperty, RED4ext::IScriptable* aInst)
+{
+    std::string result;
+
+    switch (aProperty->type->GetType())
+    {
+    case RED4ext::ERTTIType::Name:
+    {
+        const auto value = aProperty->GetValue<RED4ext::CName>(aInst);
+
+        if (const auto str = value.ToString())
+        {
+            if (str != std::string("None"))
+            {
+                return "new() { Value = " + std::string(str) + " }";
+            }
+        }
+        else
+        {
+            result = std::to_string(value.hash);
+        }
+
+        break;
+    }
+    case RED4ext::ERTTIType::Fundamental:
+    {
+        auto name = aProperty->type->GetName().ToString();
+
+        if (name == std::string("Bool"))
+        {
+            if (aProperty->GetValue<bool>(aInst))
+            {
+                return "new() { Value = true }";
+            }
+            return "";
+        }
+
+        if (name == std::string("Int8"))
+        {
+            const auto value = aProperty->GetValue<int8_t>(aInst);
+            if (value != 0)
+            {
+                return "new() { Value = " + std::to_string(value) + " }";
+            }
+            return "";
+        }
+
+        if (name == std::string("Uint8"))
+        {
+            const auto value = aProperty->GetValue<uint8_t>(aInst);
+            if (value != 0)
+            {
+                return "new() { Value = " + std::to_string(value) + " }";
+            }
+            return "";
+        }
+
+        if (name == std::string("Int16"))
+        {
+            const auto value = aProperty->GetValue<int16_t>(aInst);
+            if (value != 0)
+            {
+                return "new() { Value = " + std::to_string(value) + " }";
+            }
+            return "";
+        }
+
+        if (name == std::string("Uint16"))
+        {
+            const auto value = aProperty->GetValue<uint16_t>(aInst);
+            if (value != 0)
+            {
+                return "new() { Value = " + std::to_string(value) + " }";
+            }
+            return "";
+        }
+
+        if (name == std::string("Int32"))
+        {
+            const auto value = aProperty->GetValue<int32_t>(aInst);
+            if (value != 0)
+            {
+                return "new() { Value = " + std::to_string(value) + " }";
+            }
+            return "";
+        }
+
+        if (name == std::string("Uint32"))
+        {
+            const auto value = aProperty->GetValue<uint32_t>(aInst);
+            if (value != 0)
+            {
+                return "new() { Value = " + std::to_string(value) + " }";
+            }
+            return "";
+        }
+
+        if (name == std::string("Int64"))
+        {
+            const auto value = aProperty->GetValue<int64_t>(aInst);
+            if (value != 0)
+            {
+                return "new() { Value = " + std::to_string(value) + " }";
+            }
+            return "";
+        }
+
+        if (name == std::string("Uint64"))
+        {
+            const auto value = aProperty->GetValue<uint64_t>(aInst);
+            if (value != 0)
+            {
+                return "new() { Value = " + std::to_string(value) + " }";
+            }
+            return "";
+        }
+
+        if (name == std::string("Float"))
+        {
+            const auto value = aProperty->GetValue<float>(aInst);
+            if (value != 0.0F)
+            {
+                return "new() { Value = " + std::to_string(value) + "F }";
+            }
+            return "";
+        }
+
+        if (name == std::string("Double"))
+        {
+            const auto value = aProperty->GetValue<double>(aInst);
+            if (value != 0.0)
+            {
+                return "new() { Value = " + std::to_string(value) + " }";
+            }
+            return "";
+        }
+
+        auto tmp = "";
+        break;
+    }
+    case RED4ext::ERTTIType::Class:
+    {
+        auto tmp = "";
+        break;
+    }
+    case RED4ext::ERTTIType::Array:
+        break;
+    case RED4ext::ERTTIType::Simple:
+    {
+        auto name = aProperty->type->GetName().ToString();
+
+        if (name == std::string("NodeRef"))
+        {
+            const auto value = aProperty->GetValue<RED4ext::NodeRef>(aInst);
+            if (value.unk00 != 0)
+            {
+                auto tmp = "";
+            }
+            return "";
+        }
+
+        if (name == std::string("LocalizationString"))
+        {
+            const auto value = aProperty->GetValue<RED4ext::LocalizationString*>(aInst);
+            return "";
+        }
+
+        if (name == std::string("TweakDBID"))
+        {
+            const auto value = aProperty->GetValue<RED4ext::TweakDBID>(aInst);
+            if (value.value != 0)
+            {
+                return std::to_string(value.value);
+            }
+            return "";
+        }
+
+        if (name == std::string("String"))
+        {
+            const auto value = aProperty->GetValue<RED4ext::CString*>(aInst);
+            if (value->Length() != 0)
+            {
+                return value->c_str();
+            }
+            return "";
+        }
+
+        if (name == std::string("Variant"))
+        {
+            const auto value = aProperty->GetValue<RED4ext::Variant>(aInst);
+            return "";
+        }
+
+        if (name == std::string("CRUID"))
+        {
+            const auto value = aProperty->GetValue<RED4ext::CRUID>(aInst);
+            if (value.unk00 != 0)
+            {
+                auto tmp = "";
+            }
+            return "";
+        }
+
+        if (name == std::string("CGUID"))
+        {
+            const auto value = aProperty->GetValue<RED4ext::CGUID>(aInst);
+            if (value.unk00 != 0 || value.unk08 != 0)
+            {
+                auto tmp = "";
+            }
+            return "";
+        }
+
+        if (name == std::string("DataBuffer"))
+        {
+            const auto value = aProperty->GetValue<RED4ext::DataBuffer>(aInst);
+            return "";
+        }
+
+        if (name == std::string("serializationDeferredDataBuffer"))
+        {
+            return "";
+        }
+
+        if (name == std::string("multiChannelCurve:Float"))
+        {
+            return "";
+        }
+
+        if (name == std::string("CDateTime"))
+        {
+            const auto value = aProperty->GetValue<RED4ext::CDateTime>(aInst);
+            if (value.unk00 != 0)
+            {
+                auto tmp = "";
+            }
+            return "";
+        }
+
+        auto tmp = "";
+        break;
+    }
+    case RED4ext::ERTTIType::Enum:
+    {
+        auto ce = static_cast<RED4ext::CEnum*>(aProperty->type);
+        auto size = ce->GetSize();
+
+        size_t value;
+        if (size == 1)
+        {
+            value = aProperty->GetValue<uint8_t>(aInst);
+        }
+        else if (size == 2)
+        {
+            value = aProperty->GetValue<uint16_t>(aInst);
+        }
+        else if (size == 4)
+        {
+            value = aProperty->GetValue<uint32_t>(aInst);
+        }
+        else
+        {
+            auto tmp = "";
+        }
+
+        if (value)
+        {
+            for (uint32_t i = 0; i < ce->hashList.size; i++)
+            {
+                if (ce->valueList[i] == value)
+                {
+                    auto name = ce->name.ToString();
+                    auto tmp = ce->hashList[i].ToString();
+
+                    return "new() { Value = " + std::string(name) + "." + std::string(tmp) + " }";
+                }
+            }
+        }
+
+        break;
+    }
+    case RED4ext::ERTTIType::StaticArray:
+    {
+        // auto value = aProperty->GetValue<RED4ext::CRTTIStaticArrayType*>(aInst);
+        break;
+
+
+        auto carr = static_cast<RED4ext::CRTTIStaticArrayType*>(aProperty->type);
+        auto inner = carr->GetInnerType();
+        auto innerName = inner->GetName().ToString();
+
+        for (uint32_t i = 0, n = carr->GetLength(aInst); i < n; ++i)
+        {
+            auto t = carr->GetValuePointer(aInst, i);
+            auto tmp = "";
+        }
+        break;
+    }
+    case RED4ext::ERTTIType::NativeArray:
+    {
+        auto tmp = "";
+        break;
+    }
+    case RED4ext::ERTTIType::Pointer:
+    {
+        auto tmp = "";
+        break;
+    }
+    case RED4ext::ERTTIType::Handle:
+    {
+        auto tmp = "";
+        break;
+    }
+    case RED4ext::ERTTIType::WeakHandle:
+    {
+        auto ptr = aProperty->GetValue<uint64_t*>(aInst);
+        if (ptr)
+        {
+            struct HandleType : RED4ext::CBaseRTTIType
+            {
+                uint64_t uk;
+                CBaseRTTIType* inner;
+                RED4ext::CName name;
+            };
+
+            auto inner_type = ((HandleType*)aProperty->type)->inner;
+
+            auto tmp = "";
+        }
+
+        break;
+    }
+    case RED4ext::ERTTIType::ResourceReference:
+    {
+        auto tmp = "";
+        break;
+    }
+    case RED4ext::ERTTIType::ResourceAsyncReference:
+    {
+        auto value = aProperty->GetValue<uint64_t*>(aInst);
+
+        auto tmp = "";
+        break;
+    }
+    case RED4ext::ERTTIType::BitField:
+    {
+        auto bitField = static_cast<RED4ext::CBitfield*>(aProperty->type);
+        auto size = bitField->GetSize();
+
+        size_t value;
+        if (size == 1)
+        {
+            value = aProperty->GetValue<uint8_t>(aInst);
+        }
+        else if (size == 2)
+        {
+            value = aProperty->GetValue<uint16_t>(aInst);
+        }
+        else if (size == 4)
+        {
+            value = aProperty->GetValue<uint32_t>(aInst);
+        }
+        else if (size == 8)
+        {
+            value = aProperty->GetValue<uint64_t>(aInst);
+        }
+        else
+        {
+            auto tmp = "";
+        }
+
+        if (value)
+        {
+            auto counter = 0;
+
+            auto bitFieldName = aProperty->name.ToString();
+            auto str = std::string("new() { Value = ");
+            auto isFirst = true;
+
+            while (value != 0)
+            {
+                auto bit = value & 1;
+                value >>= 1;
+
+                if (bit == 1)
+                {
+                    if (isFirst)
+                    {
+                        isFirst = false;
+                    }
+                    else
+                    {
+                        str += " | ";
+                    }
+
+                    str += std::string(bitFieldName) + "." + std::string(bitField->bitNames[counter].ToString());
+
+                    auto tmp = "";
+                }
+
+                counter++;
+            }
+
+            str += " }";
+            return str;
+        }
+
+        break;
+    }
+    case RED4ext::ERTTIType::LegacySingleChannelCurve:
+    {
+        auto realType = static_cast<RED4ext::CRTTILegacySingleChannelCurveType*>(aProperty->type);
+
+        auto value = aProperty->GetValue<RED4ext::CRTTILegacySingleChannelCurveType*>(aInst);
+        auto name = value->name.ToString();
+
+        auto tmp = "";
+        break;
+    }
+    case RED4ext::ERTTIType::ScriptReference:
+    {
+        auto realType = static_cast<RED4ext::CRTTIScriptReferenceType*>(aProperty->type);
+
+        auto tmp = "";
+        break;
+    }
+    default:;
+    }
+
+    return "";
 }
 
 size_t WolvenKitWriter::GetOrdinalStart(std::shared_ptr<Class> aClass)

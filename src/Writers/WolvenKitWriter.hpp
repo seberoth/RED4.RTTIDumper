@@ -16,11 +16,13 @@ public:
 
 private:
     void Write(std::fstream& aFile, RED4ext::CBaseRTTIType* aType);
-    void Write(std::fstream& aFile, RED4ext::CProperty* aProperty, size_t aOrdinal);
+    void Write(std::fstream& aFile, RED4ext::CProperty* aProperty, std::unordered_set<std::string>* aOrdLst, size_t aOrdinal);
 
+    RED4ext::IScriptable* GetDefaultInstance(RED4ext::CClass* cls);
     std::string GetWolvenType(const char* aName);
     std::string GetFixedSize(RED4ext::CBaseRTTIType* aType);
     std::string GetCSType(RED4ext::CBaseRTTIType* aType);
+    std::string GetDefaultValue(RED4ext::CProperty* aProperty, RED4ext::IScriptable* aInst);
     size_t GetOrdinalStart(std::shared_ptr<Class> aClass);
 
     bool CheckForDuplicate(RED4ext::CClass* aClass, RED4ext::CProperty* aProperty);
