@@ -1,6 +1,7 @@
 #include "stdafx.hpp"
 #include "WolvenKitWriter.hpp"
 #include "Utils.hpp"
+#include <limits>
 
 WolvenKitWriter::WolvenKitWriter(const std::filesystem::path& aRootDir)
     : m_dir(aRootDir / L"csharp")
@@ -26,8 +27,11 @@ WolvenKitWriter::WolvenKitWriter(const std::filesystem::path& aRootDir)
     m_typeMappings.emplace("Matrix", "CMatrix");
     m_typeMappings.emplace("Variant", "CVariant");
 
+    m_typeMappings.emplace("multiChannelCurve", "MultiChannelCurve");
+    m_typeMappings.emplace("serializationDeferredDataBuffer", "SerializationDeferredDataBuffer");
+
     // This is a simple for some reason.
-    m_typeMappings.emplace("multiChannelCurve:Float", "multiChannelCurve<CFloat>");
+    m_typeMappings.emplace("multiChannelCurve:Float", "MultiChannelCurve<CFloat>");
 
     // WolvenKit has custom classes (with more functions or fields) for some RTTI classes.
     m_customClasses.emplace("CColor", 0);
@@ -117,10 +121,9 @@ void WolvenKitWriter::Write(Global& aGlobal)
 {
     m_enumWriter.open(m_dir / "cp77enums.cs", std::ios::out);
     m_enumWriter << "using System;" << std::endl;
-    m_enumWriter << "using WolvenKit.RED4.CR2W.Reflection;" << std::endl;
     m_enumWriter << "// ReSharper disable InconsistentNaming" << std::endl;
     m_enumWriter << std::endl;
-    m_enumWriter << "namespace WolvenKit.RED4.CR2W.Types" << std::endl;
+    m_enumWriter << "namespace WolvenKit.RED4.Types" << std::endl;
     m_enumWriter << "{" << std::endl;
     m_enumWriter << "\tpublic static partial class Enums" << std::endl;
     m_enumWriter << "\t{" << std::endl;
@@ -128,112 +131,44 @@ void WolvenKitWriter::Write(Global& aGlobal)
 
 RED4ext::IScriptable* WolvenKitWriter::GetDefaultInstance(RED4ext::CClass* cls)
 {
+    auto redName = cls->name.ToString();
     using func_t = RED4ext::IScriptable* (*)(RED4ext::CClass*);
     RED4ext::RelocFunc<func_t> func(0x21C650); // 40 56 48 83 EC 30 48 8B 81 E0 00 00 00 48 8B F1
     return func(cls);
 }
 
-void WolvenKitWriter::Write(std::shared_ptr<Class> aClass)
+void WolvenKitWriter::GetCClassInfo(std::shared_ptr<Class> aClass)
 {
-    auto dir = m_dir / L"classes";
-    if (!std::filesystem::exists(dir))
-    {
-        std::filesystem::create_directories(dir);
-    }
-
-    auto orgName = GetWolvenType(aClass->name.ToString());
-    auto name = orgName;
-
-    auto isWritten = m_isWritten.find(name);
-    if (isWritten != m_isWritten.end())
+    auto redName = aClass->name.ToString();
+    auto csName = GetWolvenType(redName);
+    auto elem = m_classCollection.find(csName);
+    if (elem != m_classCollection.end())
     {
         return;
     }
 
+    CsClass info;
+
+    info.raw = aClass->raw;
+
+    info.redName = redName;
+    info.csName = csName;
+
     if (aClass->parent)
     {
-        Write(aClass->parent);
+        GetCClassInfo(aClass->parent);
+
+        info.parentName = GetWolvenType(aClass->parent->name.ToString());
     }
-
-    auto skippedOrdinals = m_skippedOrdinals.find(name);
-
-    auto elem = m_customClasses.find(name);
-    if (elem != m_customClasses.end())
-    {
-        name += "_";
-    }
-
-    std::fstream file(dir / (name + ".cs"), std::ios::out);
-
-    file << "using WolvenKit.RED4.CR2W.Reflection;" << std::endl;
-
-    if (!aClass->props.empty())
-    {
-        file << "using FastMember;" << std::endl;
-        file << "using static WolvenKit.RED4.CR2W.Types.Enums;" << std::endl;
-    }
-
-    file << std::endl;
-    file << "namespace WolvenKit.RED4.CR2W.Types" << std::endl;
-    file << "{" << std::endl;
-    file << "\t[REDMeta]" << std::endl;
-
-    file << "\tpublic partial class " << name << " : ";
-    if (aClass->parent)
-    {
-        auto parent = GetWolvenType(aClass->parent->name.ToString());
-        file << parent;
-    }
-    else
-    {
-        file << "CVariable";
-    }
-
-    file << std::endl;
-    file << "\t{" << std::endl;
 
     auto ordinal = GetOrdinalStart(aClass);
-    if (name == "worldInstancedDestructibleMeshNode")
+    auto skippedOrdinals = m_skippedOrdinals.find(info.redName);
+
+    if (info.redName == "worldInstancedDestructibleMeshNode")
     {
         ordinal = 1000;
     }
 
-    RED4ext::IScriptable* inst;
-    if (!aClass->props.empty())
-    {
-        //inst = GetDefaultInstance(aClass->raw);
-        inst = aClass->raw->AllocInstance();
-    }
-
-    for (auto prop : aClass->props)
-    {
-        auto csType = GetCSType(prop->type);
-        auto name = SanitizeGeneral(prop->name.ToString());
-        name[0] = std::tolower(name[0]);
-
-        if (CheckForDuplicate(prop->parent, prop))
-        {
-            name += "_" + std::to_string(prop->valueOffset);
-        }
-
-        file << "\t\tprivate " << csType << " _" << name;
-
-        if (inst)
-        {
-            std::string value = GetDefaultValue(prop, inst);
-            if (!value.empty())
-            {
-                file << " = " << value;
-            }
-        }
-
-        file << ";" << std::endl;
-    }
-
-    file << std::endl;
-
-    // We want to write them as they are in the RTTI type, not orderd by offset.
-    std::unordered_set<std::string> ord_lst;
     for (auto prop : aClass->props)
     {
         if (skippedOrdinals != m_skippedOrdinals.end())
@@ -245,42 +180,191 @@ void WolvenKitWriter::Write(std::shared_ptr<Class> aClass)
             }
         }
 
-        Write(file, prop, &ord_lst, ordinal++);
+        info.properties.emplace_back(GetCPropertyInfo(prop, ordinal++));
     }
 
-    if (elem != m_customClasses.end())
+    auto elem2 = m_customClasses.find(info.redName);
+    if (elem2 != m_customClasses.end())
     {
-        ordinal += elem->second;
+        ordinal += elem2->second;
+    }
+    info.nextOrdinal = ordinal;
+
+    m_classCollection.emplace(info.csName, info);
+}
+
+WolvenKitWriter::CsProperty WolvenKitWriter::GetCPropertyInfo(RED4ext::CProperty* aProperty, size_t aOrdinal)
+{
+    CsProperty info;
+
+    info.raw = aProperty;
+
+    info.ordinal = aOrdinal;
+    info.redName = aProperty->name.ToString();
+    info.csType = GetCSType(aProperty->type);
+    info.fixedSize = GetFixedSize(aProperty->type);
+
+    info.csName = SanitizeGeneral(info.redName);
+    info.csName[0] = std::toupper(info.csName[0]);
+    info.csName = Sanitize(info.csName);
+
+    auto parent = aProperty->parent;
+
+    // Check if the variable has the same name as the class.
+    if (_stricmp(info.csName.c_str(), parent->name.ToString()) == 0)
+    {
+        info.csName += "_";
     }
 
-    m_nextOrdinals.emplace(orgName, ordinal);
+    if (CheckForDuplicate(parent, aProperty))
+    {
+        // Do not append "_" twice.
+        if (info.csName[info.csName.size() - 1] != '_')
+        {
+            info.csName += "_";
+        }
 
-    file << "\t\tpublic " << name
-         << "(IRed4EngineFile cr2w, CVariable parent, string name) : base(cr2w, parent, name) { }" << std::endl;
+        info.csName += std::to_string(aProperty->valueOffset);
+    }
 
-    file << "\t\tprotected override OrdinalDict GetPropertyOrder()" << std::endl;
+    return info;
+}
+
+void WolvenKitWriter::GetPropertiesDefaults(CsClass* aClass, RED4ext::IScriptable* aInstance, std::vector<std::string>* aPropertyValueList)
+{
+    if (!aClass->parentName.empty())
+    {
+        auto parentPair = m_classCollection.find(aClass->parentName);
+        if (parentPair != m_classCollection.end())
+        {
+            GetPropertiesDefaults(&parentPair->second, aInstance, aPropertyValueList);
+        }
+    }
+
+    for (auto prop : aClass->properties)
+    {
+        auto addr = prop.raw->GetValue<RED4ext::ScriptInstance*>(aInstance);
+        std::string value = GetDefaultValue(prop.raw->type, addr);
+
+        if (!value.empty())
+        {
+            aPropertyValueList->emplace_back(prop.csName + " = " + value + ";");
+        }
+    }
+}
+
+void WolvenKitWriter::Write(CsClass aClass)
+{
+    auto dir = m_dir / L"classes";
+    // std::filesystem::path dir = "D:\\Homebrew\\WolvenKit\\WolvenKit.RED4.Types\\Classes";
+    if (!std::filesystem::exists(dir))
+    {
+        std::filesystem::create_directories(dir);
+    }
+
+    std::fstream file(dir / (aClass.csName + ".cs"), std::ios::out);
+
+    // TODO: Only if Enums
+    if (!aClass.properties.empty())
+    {
+        file << "using static WolvenKit.RED4.Types.Enums;" << std::endl;
+    }
+
+    file << std::endl;
+    file << "namespace WolvenKit.RED4.Types" << std::endl;
+    file << "{" << std::endl;
+    file << "\t[REDMeta]" << std::endl;
+    file << "\tpublic ";
+
+    file << "partial class ";
+
+    file << aClass.csName << " : ";
+    if (!aClass.parentName.empty())
+    {
+        file << aClass.parentName;
+    }
+    else
+    {
+        file << "RedBaseClass";
+    }
+
+    file << std::endl;
+    file << "\t{" << std::endl;
+
+    RED4ext::IScriptable* inst = nullptr;
+    if (aClass.redName != "inkInputKeyIconManager")
+    {
+        inst = GetDefaultInstance(aClass.raw);
+    }
+
+    std::vector<std::string> prop_lst;
+    if (inst)
+    {
+        GetPropertiesDefaults(&aClass, inst, &prop_lst);
+    }
+
+    bool first = true;
+    for (auto prop : aClass.properties)
+    {
+        if (!first)
+        {
+            file << std::endl;
+        }
+        first = false;
+
+        Write(file, &prop);
+    }
+
+    if (!prop_lst.empty())
+    {
+        file << std::endl;
+
+        file << "\t\tpublic " << aClass.csName << "()" << std::endl;
+        file << "\t\t{" << std::endl;
+
+        for (auto ord : prop_lst)
+        {
+            file << "\t\t\t" + ord << std::endl;
+        }
+
+        file << "\t\t}" << std::endl;
+    }
+
+    /* file << "\t\tprotected override OrdinalDict GetPropertyOrder()" << std::endl;
     file << "\t\t{" << std::endl;
     file << "\t\t\tvar dict = base.GetPropertyOrder();" << std::endl;
     if (!ord_lst.empty())
     {
         file << std::endl;
+
+        std::sort(ord_lst.begin(), ord_lst.end(), [](auto& left, auto& right) { return left.second < right.second; });
+        for (auto ord : ord_lst)
+        {
+            file << "\t\t\tdict.Add(nameof(" + ord.first + "), " + std::to_string(ord.second) + ");" << std::endl;
+        }
     }
-    for (auto ord : ord_lst)
-    {
-        file << ord;
-    }
-    file << std::endl;
-    file << "\t\t\tPatchPropertyOrder(dict);" << std::endl;
     file << std::endl;
     file << "\t\t\treturn dict;" << std::endl;
-    file << "\t\t}" << std::endl;
-    file << std::endl;
-    file << "\t\tpartial void PatchPropertyOrder(OrdinalDict dict);" << std::endl;
+    file << "\t\t}" << std::endl;*/
 
     file << "\t}" << std::endl;
     file << "}" << std::endl;
+}
 
-    m_isWritten.emplace(orgName);
+void WolvenKitWriter::Write(std::fstream& aFile, CsProperty* aProperty)
+{
+    aFile << "\t\t[Ordinal(" << aProperty->ordinal << ")] " << std::endl;
+    aFile << "\t\t[RED(\"" << aProperty->redName << "\"" << aProperty->fixedSize << ")] " << std::endl;
+    aFile << "\t\tpublic " << aProperty->csType << " " << aProperty->csName << std::endl;
+    aFile << "\t\t{" << std::endl;
+    aFile << "\t\t\tget => GetPropertyValue<" << aProperty->csType << ">();" << std::endl;
+    aFile << "\t\t\tset => SetPropertyValue<" << aProperty->csType << ">(value);" << std::endl;
+    aFile << "\t\t}" << std::endl;
+}
+
+void WolvenKitWriter::Write(std::shared_ptr<Class> aClass)
+{
+    GetCClassInfo(aClass);
 }
 
 void WolvenKitWriter::Write(std::shared_ptr<Enum> aEnum)
@@ -438,6 +522,11 @@ void WolvenKitWriter::Flush()
 {
     m_enumWriter << "\t}" << std::endl;
     m_enumWriter << "}" << std::endl;
+
+    for (auto pair : m_classCollection)
+    {
+        Write(pair.second);
+    }
 }
 
 void WolvenKitWriter::Write(std::fstream& aFile, RED4ext::CBaseRTTIType* aType)
@@ -553,56 +642,6 @@ void WolvenKitWriter::Write(std::fstream& aFile, RED4ext::CBaseRTTIType* aType)
     }
 }
 
-void WolvenKitWriter::Write(std::fstream& aFile, RED4ext::CProperty* aProperty, std::unordered_set<std::string>* aOrdLst, size_t aOrdinal)
-{
-    std::string orgName = aProperty->name.ToString();
-
-    aFile << "\t\t[Ordinal(" << aOrdinal << ")] " << std::endl;
-    aFile << "\t\t[RED(\"" << orgName << "\"" << GetFixedSize(aProperty->type) << ")] " << std::endl;
-
-    auto csType = GetCSType(aProperty->type);
-
-    aFile << "\t\tpublic " << csType << " ";
-
-    auto name = SanitizeGeneral(orgName);
-    name[0] = std::toupper(name[0]);
-    name = Sanitize(name);
-
-    auto privateName = SanitizeGeneral(orgName);
-    privateName[0] = std::tolower(privateName[0]);
-    privateName = "_" + privateName;
-
-    auto parent = aProperty->parent;
-
-    // Check if the variable has the same name as the class.
-    if (_stricmp(name.c_str(), parent->name.ToString()) == 0)
-    {
-        name += "_";
-    }
-
-    if (CheckForDuplicate(parent, aProperty))
-    {
-        // Do not append "_" twice.
-        if (name[name.size() - 1] != '_')
-        {
-            name += "_";
-        }
-
-        privateName += "_" + std::to_string(aProperty->valueOffset);
-        name += std::to_string(aProperty->valueOffset);
-    }
-
-    aFile << name;
-    aOrdLst->emplace("\t\t\tdict.Add(nameof(" + name + "), " + std::to_string(aOrdinal) + ");\n");
-
-    aFile << std::endl;
-    aFile << "\t\t{" << std::endl;
-    aFile << "\t\t\tget => GetProperty(ref " << privateName << ");" << std::endl;
-    aFile << "\t\t\tset => SetProperty(ref " << privateName << ", value);" << std::endl;
-    aFile << "\t\t}" << std::endl;
-    aFile << std::endl;
-}
-
 std::string WolvenKitWriter::GetWolvenType(const char* aName)
 {
     auto elem = m_typeMappings.find(aName);
@@ -642,6 +681,11 @@ std::string WolvenKitWriter::GetCSType(RED4ext::CBaseRTTIType* aType)
 
     auto name = GetWolvenType(cname.ToString());
 
+    if (name.find("Color") != std::string::npos)
+    {
+        auto tmp = "";
+    }
+
     using ERTTIType = RED4ext::ERTTIType;
     switch (aType->GetType())
     {
@@ -655,9 +699,12 @@ std::string WolvenKitWriter::GetCSType(RED4ext::CBaseRTTIType* aType)
         return "CArray<" + GetCSType(arr->innerType) + ">";
     }
     case ERTTIType::Enum:
-    case ERTTIType::BitField:
     {
         return "CEnum<" + name + ">";
+    }
+    case ERTTIType::BitField:
+    {
+        return "CBitField<" + name + ">";
     }
     case ERTTIType::StaticArray:
     {
@@ -677,22 +724,30 @@ std::string WolvenKitWriter::GetCSType(RED4ext::CBaseRTTIType* aType)
     case ERTTIType::WeakHandle:
     {
         auto whandle = static_cast<RED4ext::CRTTIWeakHandleType*>(aType);
-        return "wCHandle<" + GetCSType(whandle->innerType) + ">";
+        return "CWeakHandle<" + GetCSType(whandle->innerType) + ">";
     }
     case ERTTIType::ResourceReference:
     {
         auto rRef = static_cast<RED4ext::CRTTIResourceReferenceType*>(aType);
-        return "rRef<" + GetCSType(rRef->innerType) + ">";
+        return "CResourceReference<" + GetCSType(rRef->innerType) + ">";
     }
     case ERTTIType::ResourceAsyncReference:
     {
         auto raRef = static_cast<RED4ext::CRTTIResourceAsyncReferenceType*>(aType);
-        return "raRef<" + GetCSType(raRef->innerType) + ">";
+        return "CResourceAsyncReference<" + GetCSType(raRef->innerType) + ">";
     }
     case ERTTIType::LegacySingleChannelCurve:
     {
         auto curve = static_cast<RED4ext::CRTTILegacySingleChannelCurveType*>(aType);
-        return "curveData<" + GetCSType(curve->curveType) + ">";
+        return "CLegacySingleChannelCurve<" + GetCSType(curve->curveType) + ">";
+    }
+    case RED4ext::ERTTIType::Simple:
+    {
+        if (name == std::string("CGUID"))
+        {
+            return "CGuid";
+        }
+        return name;
     }
     default:
     {
@@ -701,21 +756,42 @@ std::string WolvenKitWriter::GetCSType(RED4ext::CBaseRTTIType* aType)
     }
 }
 
-std::string WolvenKitWriter::GetDefaultValue(RED4ext::CProperty* aProperty, RED4ext::IScriptable* aInst)
+std::string WolvenKitWriter::GetDefaultValues(RED4ext::CClass* aType, RED4ext::ScriptInstance* aInstance)
+{
+    if (aType->props.size == 0)
+    {
+        return "";
+    }
+
+    for (auto prop : aType->props)
+    {
+        if (prop->flags.b3)
+            continue;
+
+        auto propInst = prop->GetValue<RED4ext::ScriptInstance*>(aInstance);
+        auto tResult = GetDefaultValue(prop->type, propInst);
+    }
+
+    return "";
+}
+
+std::string WolvenKitWriter::GetDefaultValue(RED4ext::CBaseRTTIType* aType, RED4ext::ScriptInstance* aInstance, int level)
 {
     std::string result;
 
-    switch (aProperty->type->GetType())
+    auto type = aType->GetType();
+
+    switch (aType->GetType())
     {
     case RED4ext::ERTTIType::Name:
     {
-        const auto value = aProperty->GetValue<RED4ext::CName>(aInst);
+        const auto value = *(RED4ext::CName*)aInstance;
 
         if (const auto str = value.ToString())
         {
-            if (str != std::string("None"))
+            if (level != 0 || str != std::string("None"))
             {
-                return "new() { Value = " + std::string(str) + " }";
+                return "@\"" + std::string(str) + "\"";
             }
         }
         else
@@ -727,255 +803,289 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CProperty* aProperty, RED4
     }
     case RED4ext::ERTTIType::Fundamental:
     {
-        auto name = aProperty->type->GetName().ToString();
+        auto name = aType->GetName().ToString();
 
         if (name == std::string("Bool"))
         {
-            if (aProperty->GetValue<bool>(aInst))
+            auto val = (bool)(*(uint8_t*)aInstance);
+            if (level != 0)
             {
-                return "new() { Value = true }";
+                return val ? "true" : "false";
             }
-            return "";
-        }
 
-        if (name == std::string("Int8"))
+            if (val)
+            {
+                return "true";
+            }
+        }
+        else if (name == std::string("Int8"))
         {
-            const auto value = aProperty->GetValue<int8_t>(aInst);
-            if (value != 0)
+            const auto value = *(int8_t*)aInstance;
+            if (level != 0 || value != 0)
             {
-                return "new() { Value = " + std::to_string(value) + " }";
+                return std::to_string(value);
             }
-            return "";
         }
-
-        if (name == std::string("Uint8"))
+        else if (name == std::string("Uint8"))
         {
-            const auto value = aProperty->GetValue<uint8_t>(aInst);
-            if (value != 0)
+            const auto value = *(uint8_t*)aInstance;
+            if (level != 0 || value != 0)
             {
-                return "new() { Value = " + std::to_string(value) + " }";
+                return std::to_string(value);
             }
-            return "";
         }
-
-        if (name == std::string("Int16"))
+        else if (name == std::string("Int16"))
         {
-            const auto value = aProperty->GetValue<int16_t>(aInst);
-            if (value != 0)
+            const auto value = *(int16_t*)aInstance;
+            if (level != 0 || value != 0)
             {
-                return "new() { Value = " + std::to_string(value) + " }";
+                return std::to_string(value);
             }
-            return "";
         }
-
-        if (name == std::string("Uint16"))
+        else if (name == std::string("Uint16"))
         {
-            const auto value = aProperty->GetValue<uint16_t>(aInst);
-            if (value != 0)
+            const auto value = *(uint16_t*)aInstance;
+            if (level != 0 || value != 0)
             {
-                return "new() { Value = " + std::to_string(value) + " }";
+                // why this no work?!?
+                //if (value == std::numeric_limits<uint16_t>::max())
+                return std::to_string(value);
             }
-            return "";
         }
-
-        if (name == std::string("Int32"))
+        else if (name == std::string("Int32"))
         {
-            const auto value = aProperty->GetValue<int32_t>(aInst);
-            if (value != 0)
+            const auto value = *(int32_t*)aInstance;
+            if (level != 0 || value != 0)
             {
-                return "new() { Value = " + std::to_string(value) + " }";
+                return std::to_string(value);
             }
-            return "";
         }
-
-        if (name == std::string("Uint32"))
+        else if (name == std::string("Uint32"))
         {
-            const auto value = aProperty->GetValue<uint32_t>(aInst);
-            if (value != 0)
+            const auto value = *(uint32_t*)aInstance;
+            if (level != 0 || value != 0)
             {
-                return "new() { Value = " + std::to_string(value) + " }";
+                return std::to_string(value);
             }
-            return "";
         }
-
-        if (name == std::string("Int64"))
+        else if (name == std::string("Int64"))
         {
-            const auto value = aProperty->GetValue<int64_t>(aInst);
-            if (value != 0)
+            const auto value = *(int64_t*)aInstance;
+            if (level != 0 || value != 0)
             {
-                return "new() { Value = " + std::to_string(value) + " }";
+                return std::to_string(value);
             }
-            return "";
         }
-
-        if (name == std::string("Uint64"))
+        else if (name == std::string("Uint64"))
         {
-            const auto value = aProperty->GetValue<uint64_t>(aInst);
-            if (value != 0)
+            const auto value = *(uint64_t*)aInstance;
+            if (level != 0 || value != 0)
             {
-                return "new() { Value = " + std::to_string(value) + " }";
+                return std::to_string(value);
             }
-            return "";
         }
-
-        if (name == std::string("Float"))
+        else if (name == std::string("Float"))
         {
-            const auto value = aProperty->GetValue<float>(aInst);
-            if (value != 0.0F)
+            const auto value = *(float*)aInstance;
+            if (level != 0 || value != 0.0F)
             {
-                return "new() { Value = " + std::to_string(value) + "F }";
+                if (isinf(value))
+                {
+                    return "float.PositiveInfinity";
+                }
+                else
+                {
+                    return std::to_string(value) + "F";
+                }
             }
-            return "";
         }
-
-        if (name == std::string("Double"))
+        else if (name == std::string("Double"))
         {
-            const auto value = aProperty->GetValue<double>(aInst);
-            if (value != 0.0)
+            const auto value = *(double*)aInstance;
+            if (level != 0 || value != 0.0)
             {
-                return "new() { Value = " + std::to_string(value) + " }";
+                return std::to_string(value) + "D";
             }
-            return "";
         }
-
-        auto tmp = "";
+        
         break;
     }
     case RED4ext::ERTTIType::Class:
     {
-        auto tmp = "";
+        auto tResult = GetDefaultValues((RED4ext::CClass*)aType, aInstance);
+
+        // TODO: Do we need to check this?
+        // auto tResult = GetDefaultValues((RED4ext::CClass*)aType, aInstance);
+        /*if (level == 0)
+        {
+            return "new()";
+        }
+        else
+        {
+            auto tmp = "";
+        }*/
+
         break;
     }
     case RED4ext::ERTTIType::Array:
+    {
+        auto carr = static_cast<RED4ext::CRTTIArrayType*>(aType);
+        auto inner = carr->GetInnerType();
+        auto innerName = inner->GetName().ToString();
+
+        for (uint32_t i = 0, n = carr->GetLength(aInstance); i < n; ++i)
+        {
+            RED4ext::ScriptInstance* t1 = (RED4ext::ScriptInstance*)carr->GetValuePointer(aInstance, i);
+            auto innerValue = GetDefaultValue(inner, t1, level + 1);
+            auto tmp = "";
+        }
         break;
+    }
     case RED4ext::ERTTIType::Simple:
     {
-        auto name = aProperty->type->GetName().ToString();
+        auto name = aType->GetName().ToString();
 
         if (name == std::string("NodeRef"))
         {
-            const auto value = aProperty->GetValue<RED4ext::NodeRef>(aInst);
+            // TODO:
+            const auto value = *(RED4ext::NodeRef*)aInstance;
             if (value.unk00 != 0)
             {
                 auto tmp = "";
             }
-            return "";
         }
-
-        if (name == std::string("LocalizationString"))
+        else if (name == std::string("LocalizationString"))
         {
-            const auto value = aProperty->GetValue<RED4ext::LocalizationString*>(aInst);
-            return "";
-        }
-
-        if (name == std::string("TweakDBID"))
-        {
-            const auto value = aProperty->GetValue<RED4ext::TweakDBID>(aInst);
-            if (value.value != 0)
+            const auto value = (RED4ext::LocalizationString*)aInstance;
+            auto str = value->unk08.c_str();
+            if (level != 0 || str != std::string(""))
             {
-                return std::to_string(value.value);
+                return "new() { Unk1 = " + std::to_string(value->unk00) + ", Value = \"" + std::string(str) + "\" }";
             }
-            return "";
         }
-
-        if (name == std::string("String"))
+        else if (name == std::string("TweakDBID"))
         {
-            const auto value = aProperty->GetValue<RED4ext::CString*>(aInst);
-            if (value->Length() != 0)
+            const auto var = *(RED4ext::TweakDBID*)aInstance;
+            if (var.value != 0)
             {
-                return value->c_str();
+                return "new() { Value = " + std::to_string(var.value) + " }";
             }
-            return "";
         }
-
-        if (name == std::string("Variant"))
+        else if (name == std::string("String"))
         {
-            const auto value = aProperty->GetValue<RED4ext::Variant>(aInst);
-            return "";
-        }
-
-        if (name == std::string("CRUID"))
-        {
-            const auto value = aProperty->GetValue<RED4ext::CRUID>(aInst);
-            if (value.unk00 != 0)
+            const auto var = ((RED4ext::CString*)aInstance)->c_str();
+            if (level != 0 || var != std::string(""))
             {
-                auto tmp = "";
+                return "@\"" + std::string(var) + "\"";
             }
-            return "";
         }
-
-        if (name == std::string("CGUID"))
+        else if (name == std::string("Variant"))
         {
-            const auto value = aProperty->GetValue<RED4ext::CGUID>(aInst);
+            // TODO
+            auto var = (RED4ext::Variant*)aInstance;
+        }
+        else if (name == std::string("CRUID"))
+        {
+            const auto var = *(RED4ext::CRUID*)aInstance;
+            if (level != 0 || var.unk00 != 0)
+            {
+                return "new() { Value = " + std::to_string(var.unk00) + " }";
+            }
+        }
+        else if (name == std::string("CGUID"))
+        {
+            // TODO: 16 bytes
+            const auto value = *(RED4ext::CGUID*)aInstance;
             if (value.unk00 != 0 || value.unk08 != 0)
             {
                 auto tmp = "";
             }
+        }
+        else if (name == std::string("DataBuffer"))
+        {
+            // TODO
+            const auto value = *(RED4ext::DataBuffer*)aInstance;
             return "";
         }
-
-        if (name == std::string("DataBuffer"))
+        else if (name == std::string("serializationDeferredDataBuffer"))
         {
-            const auto value = aProperty->GetValue<RED4ext::DataBuffer>(aInst);
+            // TODO
             return "";
         }
-
-        if (name == std::string("serializationDeferredDataBuffer"))
+        else if (name == std::string("multiChannelCurve:Float"))
         {
+            // TODO
+            const auto var = (RED4ext::CRTTIMultiChannelCurveType*)aInstance;
             return "";
         }
-
-        if (name == std::string("multiChannelCurve:Float"))
+        else if (name == std::string("CDateTime"))
         {
-            return "";
-        }
-
-        if (name == std::string("CDateTime"))
-        {
-            const auto value = aProperty->GetValue<RED4ext::CDateTime>(aInst);
-            if (value.unk00 != 0)
+            const auto var = *(RED4ext::CDateTime*)aInstance;
+            if (level != 0 || var.unk00 != 0)
             {
-                auto tmp = "";
+                return "new() { Value = " + std::to_string(var.unk00) + " }";
             }
-            return "";
         }
 
-        auto tmp = "";
         break;
     }
     case RED4ext::ERTTIType::Enum:
     {
-        auto ce = static_cast<RED4ext::CEnum*>(aProperty->type);
+        auto ce = static_cast<RED4ext::CEnum*>(aType);
         auto size = ce->GetSize();
 
         size_t value;
         if (size == 1)
         {
-            value = aProperty->GetValue<uint8_t>(aInst);
+            value = *(uint8_t*)aInstance;
         }
         else if (size == 2)
         {
-            value = aProperty->GetValue<uint16_t>(aInst);
+            value = *(uint16_t*)aInstance;
         }
         else if (size == 4)
         {
-            value = aProperty->GetValue<uint32_t>(aInst);
+            value = *(uint32_t*)aInstance;
         }
-        else
+        else if (size == 8)
         {
-            auto tmp = "";
+            value = *(uint64_t*)aInstance;
         }
 
         if (value)
         {
             for (uint32_t i = 0; i < ce->hashList.size; i++)
             {
-                if (ce->valueList[i] == value)
+                size_t enumValue;
+                if (size == 1)
+                {
+                    enumValue = (uint8_t)ce->valueList[i];
+                }
+                else if (size == 2)
+                {
+                    enumValue = (uint16_t)ce->valueList[i];
+                }
+                else if (size == 4)
+                {
+                    enumValue = (uint32_t)ce->valueList[i];
+                }
+                else if (size == 8)
+                {
+                    enumValue = (uint64_t)ce->valueList[i];
+                }
+                if (enumValue == value)
                 {
                     auto name = ce->name.ToString();
-                    auto tmp = ce->hashList[i].ToString();
+                    auto orgName = std::string(ce->hashList[i].ToString());
 
-                    return "new() { Value = " + std::string(name) + "." + std::string(tmp) + " }";
+                    auto valName = SanitizeGeneral(orgName);
+                    valName = Sanitize(valName);
+                    if (std::isdigit(valName[0]))
+                    {
+                        valName = "_" + valName;
+                    }
+
+                    return "Enums." + std::string(name) + "." + valName;
                 }
             }
         }
@@ -984,53 +1094,67 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CProperty* aProperty, RED4
     }
     case RED4ext::ERTTIType::StaticArray:
     {
-        // auto value = aProperty->GetValue<RED4ext::CRTTIStaticArrayType*>(aInst);
-        break;
-
-
-        auto carr = static_cast<RED4ext::CRTTIStaticArrayType*>(aProperty->type);
+        auto carr = static_cast<RED4ext::CRTTIStaticArrayType*>(aType);
         auto inner = carr->GetInnerType();
         auto innerName = inner->GetName().ToString();
 
-        for (uint32_t i = 0, n = carr->GetLength(aInst); i < n; ++i)
+        return "new(" + std::to_string(carr->GetLength(aInstance)) + ");";
+
+        auto csType = GetCSType(inner);
+        std::string tResult = "new() {";
+
+        for (uint32_t i = 0, n = carr->GetLength(aInstance); i < n; ++i)
         {
-            auto t = carr->GetValuePointer(aInst, i);
-            auto tmp = "";
+            RED4ext::ScriptInstance* t1 = (RED4ext::ScriptInstance*)carr->GetValuePointer(aInstance, i);
+            auto innerValue = GetDefaultValue(inner, t1, level + 1);
+            tResult += " " + innerValue + ",";
         }
+
+        if (tResult[tResult.size() - 1] == ',')
+        {
+            tResult.pop_back();
+        }
+
+        tResult += " }";
         break;
     }
     case RED4ext::ERTTIType::NativeArray:
     {
-        auto tmp = "";
+        auto carr = static_cast<RED4ext::CRTTINativeArrayType*>(aType);
+        auto inner = carr->GetInnerType();
+        auto innerName = inner->GetName().ToString();
+
+        return "new(" + std::to_string(carr->GetLength(aInstance)) + ");";
+
+        for (uint32_t i = 0, n = carr->GetLength(aInstance); i < n; ++i)
+        {
+            RED4ext::ScriptInstance* t1 = (RED4ext::ScriptInstance*)carr->GetValuePointer(aInstance, i);
+            auto innerValue = GetDefaultValue(inner, t1, level + 1);
+            auto tmp = "";
+        }
         break;
     }
     case RED4ext::ERTTIType::Pointer:
-    {
-        auto tmp = "";
-        break;
-    }
     case RED4ext::ERTTIType::Handle:
-    {
-        auto tmp = "";
-        break;
-    }
     case RED4ext::ERTTIType::WeakHandle:
     {
-        auto ptr = aProperty->GetValue<uint64_t*>(aInst);
+        auto ptr = *(uint64_t*)aInstance;
         if (ptr)
         {
             struct HandleType : RED4ext::CBaseRTTIType
             {
-                uint64_t uk;
-                CBaseRTTIType* inner;
-                RED4ext::CName name;
+                CBaseRTTIType* innerType;
             };
 
-            auto inner_type = ((HandleType*)aProperty->type)->inner;
-
-            auto tmp = "";
+            auto inner_type = ((HandleType*)aType)->innerType;
+            if (inner_type->GetType() == RED4ext::ERTTIType::Class)
+            {
+                auto innerValue = GetDefaultValue(inner_type, (RED4ext::ScriptInstance*)ptr, level + 1);
+                auto tmp = "";
+            }
         }
 
+        auto tmp = "";
         break;
     }
     case RED4ext::ERTTIType::ResourceReference:
@@ -1040,44 +1164,41 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CProperty* aProperty, RED4
     }
     case RED4ext::ERTTIType::ResourceAsyncReference:
     {
-        auto value = aProperty->GetValue<uint64_t*>(aInst);
+        auto value = *(uint64_t*)aInstance;
 
         auto tmp = "";
         break;
     }
     case RED4ext::ERTTIType::BitField:
     {
-        auto bitField = static_cast<RED4ext::CBitfield*>(aProperty->type);
+        auto bitField = static_cast<RED4ext::CBitfield*>(aType);
         auto size = bitField->GetSize();
 
         size_t value;
         if (size == 1)
         {
-            value = aProperty->GetValue<uint8_t>(aInst);
+            value = *(uint8_t*)aInstance;
         }
         else if (size == 2)
         {
-            value = aProperty->GetValue<uint16_t>(aInst);
+            value = *(uint16_t*)aInstance;
         }
         else if (size == 4)
         {
-            value = aProperty->GetValue<uint32_t>(aInst);
+            value = *(uint32_t*)aInstance;
         }
         else if (size == 8)
         {
-            value = aProperty->GetValue<uint64_t>(aInst);
-        }
-        else
-        {
-            auto tmp = "";
+            value = *(uint64_t*)aInstance;
         }
 
         if (value)
         {
             auto counter = 0;
 
-            auto bitFieldName = aProperty->name.ToString();
-            auto str = std::string("new() { Value = ");
+            //auto bitFieldName = aProperty->name.ToString();
+            auto bitFieldName = bitField->name.ToString();
+            auto str = std::string("");
             auto isFirst = true;
 
             while (value != 0)
@@ -1096,15 +1217,21 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CProperty* aProperty, RED4
                         str += " | ";
                     }
 
-                    str += std::string(bitFieldName) + "." + std::string(bitField->bitNames[counter].ToString());
+                    auto orgName = std::string(bitField->bitNames[counter].ToString());
 
-                    auto tmp = "";
+                    auto valName = SanitizeGeneral(orgName);
+                    valName = Sanitize(valName);
+                    if (std::isdigit(valName[0]))
+                    {
+                        valName = "_" + valName;
+                    }
+
+                    str += "Enums." + std::string(bitFieldName) + "." + valName;
                 }
 
                 counter++;
             }
 
-            str += " }";
             return str;
         }
 
@@ -1112,17 +1239,17 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CProperty* aProperty, RED4
     }
     case RED4ext::ERTTIType::LegacySingleChannelCurve:
     {
-        auto realType = static_cast<RED4ext::CRTTILegacySingleChannelCurveType*>(aProperty->type);
+        auto realType = static_cast<RED4ext::CRTTILegacySingleChannelCurveType*>(aType);
 
-        auto value = aProperty->GetValue<RED4ext::CRTTILegacySingleChannelCurveType*>(aInst);
-        auto name = value->name.ToString();
+        //auto value = *(RED4ext::CRTTILegacySingleChannelCurveType*)aInstance;
+        //auto name = value.name.ToString();
 
         auto tmp = "";
         break;
     }
     case RED4ext::ERTTIType::ScriptReference:
     {
-        auto realType = static_cast<RED4ext::CRTTIScriptReferenceType*>(aProperty->type);
+        auto realType = static_cast<RED4ext::CRTTIScriptReferenceType*>(aType);
 
         auto tmp = "";
         break;
@@ -1138,10 +1265,11 @@ size_t WolvenKitWriter::GetOrdinalStart(std::shared_ptr<Class> aClass)
     if (aClass->parent)
     {
         auto parentName = GetWolvenType(aClass->parent->name.ToString());
-        auto elem = m_nextOrdinals.find(parentName);
-        if (elem != m_nextOrdinals.end())
+        auto parentPair = m_classCollection.find(parentName);
+        if (parentPair != m_classCollection.end())
         {
-            return elem->second;
+            CsClass parent = (CsClass)parentPair->second;
+            return parent.nextOrdinal;
         }
 
         throw std::runtime_error("unknown parent");
