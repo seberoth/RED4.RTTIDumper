@@ -4,7 +4,7 @@ on: [ push, pull_request ]
 jobs:
   build:
     name: Build (${{ matrix.config }})
-    runs-on: windows-latest
+    runs-on: windows-2022
 
     strategy:
       matrix:
@@ -21,7 +21,7 @@ jobs:
 
       - name: Download Premake
         shell: powershell
-        run: Invoke-WebRequest https://github.com/premake/premake-core/releases/download/v5.0.0-alpha15/premake-5.0.0-alpha15-windows.zip -OutFile ./premake/premake.zip
+        run: Invoke-WebRequest https://github.com/premake/premake-core/releases/download/v5.0.0-beta1/premake-5.0.0-beta1-windows.zip -OutFile ./premake/premake.zip
 
       - name: Extract Premake
         shell: powershell
