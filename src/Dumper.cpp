@@ -148,11 +148,33 @@ void Dumper::CollectType(RED4ext::CClass* aClass)
     cls->props.reserve(aClass->props.size);
     for (auto prop : aClass->props)
     {
-        cls->props.emplace_back(prop);
+        auto tProp = std::make_shared<Property>();
+
+        tProp->raw = prop;
+        tProp->isClass = false;
+
+        auto typeId = prop->type->GetType();
+        if (typeId == RED4ext::ERTTIType::Class)
+        {
+            auto cls = static_cast<RED4ext::CClass*>(prop->type);
+            auto name = cls->name.ToString();
+            if (m_types.count(name) == 0)
+            {
+                CollectType(cls);
+            }
+
+            auto type = m_types.at(name);
+            auto propCls = std::dynamic_pointer_cast<Class>(type);
+
+            tProp->isClass = true;
+            tProp->cls = propCls;
+        }
+
+        cls->props.emplace_back(tProp);
     }
 
     /*std::sort(cls->props.begin(), cls->props.end(), [](const RED4ext::CProperty* aLhs, const RED4ext::CProperty* aRhs) {
-        return aLhs->valueOffset < aRhs->valueOffset;
+     return aLhs->valueOffset < aRhs->valueOffset;
     });*/
 
     for (auto func : aClass->funcs)

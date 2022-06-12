@@ -52,6 +52,7 @@ private:
     RED4ext::IScriptable* GetDefaultInstance(RED4ext::CClass* cls);
     std::string GetWolvenType(const char* aName);
     std::string GetFixedSize(RED4ext::CBaseRTTIType* aType);
+
     std::string GetCSType(RED4ext::CBaseRTTIType* aType);
     std::string GetDefaultValues(RED4ext::CClass* aType, RED4ext::ScriptInstance* aInstance);
     std::string GetDefaultValue(RED4ext::CBaseRTTIType* aType, RED4ext::ScriptInstance* aInstance, int level = 0);

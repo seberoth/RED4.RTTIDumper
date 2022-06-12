@@ -113,6 +113,7 @@ WolvenKitWriter::WolvenKitWriter(const std::filesystem::path& aRootDir)
     m_skippedOrdinals.emplace("animAnimNode_ConditionalSegmentBegin", std::unordered_set<size_t>{12});
     m_skippedOrdinals.emplace("animAnimNode_Drag", std::unordered_set<size_t>{16});
     m_skippedOrdinals.emplace("animDyngParticle", std::unordered_set<size_t>{0});
+    m_skippedOrdinals.emplace("animFacialSetup", std::unordered_set<size_t>{8, 9});
     m_skippedOrdinals.emplace("animLipsyncMapping", std::unordered_set<size_t>{3});
     m_skippedOrdinals.emplace("worldNode", std::unordered_set<size_t>{0, 1});
 }
@@ -121,7 +122,6 @@ void WolvenKitWriter::Write(Global& aGlobal)
 {
     m_enumWriter.open(m_dir / "cp77enums.cs", std::ios::out);
     m_enumWriter << "using System;" << std::endl;
-    m_enumWriter << "// ReSharper disable InconsistentNaming" << std::endl;
     m_enumWriter << std::endl;
     m_enumWriter << "namespace WolvenKit.RED4.Types" << std::endl;
     m_enumWriter << "{" << std::endl;
@@ -180,7 +180,7 @@ void WolvenKitWriter::GetCClassInfo(std::shared_ptr<Class> aClass)
             }
         }
 
-        info.properties.emplace_back(GetCPropertyInfo(prop, ordinal++));
+        info.properties.emplace_back(GetCPropertyInfo(prop->raw, ordinal++));
     }
 
     auto elem2 = m_customClasses.find(info.redName);
@@ -289,7 +289,7 @@ void WolvenKitWriter::Write(CsClass aClass)
     }
 
     file << std::endl;
-    file << "\t{" << std::endl;
+    file << "\t{";
 
     RED4ext::IScriptable* inst = nullptr;
     if (aClass.redName != "inkInputKeyIconManager")
@@ -373,12 +373,35 @@ void WolvenKitWriter::Write(std::shared_ptr<Enum> aEnum)
 
     m_enumWriter << "\t\tpublic enum " << name;
 
+    if (name == "questVehicleCameraPerspective")
+    {
+        auto a = "";
+    }
+    
     switch (aEnum->actualSize)
     {
+    case sizeof(int8_t):
+    {
+        m_enumWriter << " : byte";
+        break;
+    }
+    case sizeof(int16_t):
+    {
+        m_enumWriter << " : ushort";
+        break;
+    }
+    case sizeof(int32_t):
+    {
+        break;
+    }
     case sizeof(int64_t):
     {
         m_enumWriter << " : ulong";
         break;
+    }
+    default:
+    {
+        auto a = "";
     }
     }
 
@@ -634,11 +657,6 @@ void WolvenKitWriter::Write(std::fstream& aFile, RED4ext::CBaseRTTIType* aType)
 
         break;
     }
-    default:
-    {
-        aFile << name;
-        break;
-    }
     }
 }
 
@@ -668,8 +686,14 @@ std::string WolvenKitWriter::GetFixedSize(RED4ext::CBaseRTTIType* aType)
         auto arr = static_cast<RED4ext::CRTTINativeArrayType*>(aType);
         return ", " + std::to_string(arr->size) + GetFixedSize(arr->innerType);
     }
+    case ERTTIType::FixedArray:
+    {
+        auto arr = static_cast<RED4ext::CRTTIStaticArrayType*>(aType);
+        return ", " + std::to_string(arr->size) + GetFixedSize(arr->innerType);
+    }
     default:
     {
+        auto b = aType->GetType();
         return "";
     }
     }
@@ -751,6 +775,7 @@ std::string WolvenKitWriter::GetCSType(RED4ext::CBaseRTTIType* aType)
     }
     default:
     {
+        auto b = aType->GetType();
         return name;
     }
     }

@@ -197,21 +197,21 @@ void TextWriter::Write(std::fstream& aFile, std::shared_ptr<Class> aClass)
     {
         aFile << "\t";
 
-        if (prop->flags.isPublic)
+        if (prop->raw->flags.isPublic)
         {
             aFile << "public    ";
         }
-        else if (prop->flags.isProtected)
+        else if (prop->raw->flags.isProtected)
         {
             aFile << "protected ";
         }
-        else if (prop->flags.isPrivate)
+        else if (prop->raw->flags.isPrivate)
         {
             aFile << "private   ";
         }
 
         aFile << "var ";
-        Write(aFile, prop);
+        Write(aFile, prop->raw);
         aFile << ";" << std::endl;
         // aFile << "; // " << std::hex << std::showbase << prop->valueOffset << std::endl;
     }

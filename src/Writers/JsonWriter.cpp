@@ -67,7 +67,7 @@ void JsonWriter::Write(std::shared_ptr<Class> aClass)
 
     for (auto& prop : aClass->props)
     {
-        auto obj = ProcessType(prop);
+        auto obj = ProcessType(prop->raw);
         props.emplace_back(obj);
     }
 

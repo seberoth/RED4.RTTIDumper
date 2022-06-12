@@ -2,6 +2,8 @@
 
 #include <RED4ext/RTTITypes.hpp>
 
+struct Class;
+
 struct BaseType
 {
     virtual ~BaseType() = default;
@@ -28,6 +30,14 @@ struct Enum : BaseType
     uint8_t actualSize;
 };
 
+struct Property : BaseType
+{
+    RED4ext::CProperty* raw;
+
+    bool isClass;
+    std::shared_ptr<Class> cls;
+};
+
 struct Class : BaseType
 {
     RED4ext::CClass* raw;
@@ -40,7 +50,7 @@ struct Class : BaseType
     uint32_t holderSize;
     RED4ext::CClass::Flags flags;
 
-    std::vector<RED4ext::CProperty*> props;
+    std::vector<std::shared_ptr<Property>> props;
     std::vector<RED4ext::CBaseFunction*> funcs;
 };
 

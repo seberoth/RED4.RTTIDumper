@@ -25,8 +25,8 @@ RED4EXT_C_EXPORT bool RED4EXT_CALL Main(RED4ext::PluginHandle aHandle, RED4ext::
             auto dumpsDir = std::filesystem::current_path() / L"dumps";
 
             std::vector<std::shared_ptr<IWriter>> writers;
-            writers.emplace_back(new TextWriter(dumpsDir));
-            writers.emplace_back(new JsonWriter(dumpsDir, true));
+            //writers.emplace_back(new TextWriter(dumpsDir));
+            //writers.emplace_back(new JsonWriter(dumpsDir, true));
             writers.emplace_back(new WolvenKitWriter(dumpsDir));
 
             Dumper dumper;
@@ -35,8 +35,8 @@ RED4EXT_C_EXPORT bool RED4EXT_CALL Main(RED4ext::PluginHandle aHandle, RED4ext::
                 dumper.Run(writer);
             }
 
-            auto path = dumpsDir / L"cpp";
-            RED4ext::GameReflection::Dump(path);
+            //auto path = dumpsDir / L"cpp";
+            //RED4ext::GameReflection::Dump(path);
 
             return true;
         };
