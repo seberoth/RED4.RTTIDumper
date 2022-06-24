@@ -131,7 +131,6 @@ void WolvenKitWriter::Write(Global& aGlobal)
 
 RED4ext::IScriptable* WolvenKitWriter::GetDefaultInstance(RED4ext::CClass* cls)
 {
-    auto redName = cls->name.ToString();
     using func_t = RED4ext::IScriptable* (*)(RED4ext::CClass*);
     RED4ext::RelocFunc<func_t> func(0x21C650); // 40 56 48 83 EC 30 48 8B 81 E0 00 00 00 48 8B F1
     return func(cls);
@@ -230,25 +229,45 @@ WolvenKitWriter::CsProperty WolvenKitWriter::GetCPropertyInfo(RED4ext::CProperty
     return info;
 }
 
-void WolvenKitWriter::GetPropertiesDefaults(CsClass* aClass, RED4ext::IScriptable* aInstance, std::vector<std::string>* aPropertyValueList)
+void WolvenKitWriter::GetPropertiesDefaults(CsClass* aClass, RED4ext::ScriptInstance aInstance, std::vector<std::string>* aPropertyValueList, int level)
 {
     if (!aClass->parentName.empty())
     {
         auto parentPair = m_classCollection.find(aClass->parentName);
         if (parentPair != m_classCollection.end())
         {
-            GetPropertiesDefaults(&parentPair->second, aInstance, aPropertyValueList);
+            GetPropertiesDefaults(&parentPair->second, aInstance, aPropertyValueList, level + 1);
         }
     }
 
     for (auto prop : aClass->properties)
     {
         auto addr = prop.raw->GetValue<RED4ext::ScriptInstance*>(aInstance);
-        std::string value = GetDefaultValue(prop.raw->type, addr);
+        std::string value = GetDefaultValue(prop.raw->type, addr, level);
+        std::string value2;
+
+        if (level != 0)
+        {
+            auto inst2 = aClass->raw->AllocInstance();
+            if (inst2)
+            {
+                auto addr2 = prop.raw->GetValue<RED4ext::ScriptInstance*>(inst2);
+                value2 = GetDefaultValue(prop.raw->type, addr2, 0);
+
+                if (value == value2)
+                {
+                    continue;
+                }
+            }
+        }
 
         if (!value.empty())
         {
             aPropertyValueList->emplace_back(prop.csName + " = " + value + ";");
+        }
+        else
+        {
+            auto b = "";
         }
     }
 }
@@ -273,7 +292,10 @@ void WolvenKitWriter::Write(CsClass aClass)
     file << std::endl;
     file << "namespace WolvenKit.RED4.Types" << std::endl;
     file << "{" << std::endl;
-    file << "\t[REDMeta]" << std::endl;
+    if (aClass.raw->flags.hasNoDefaultObjectSerialization)
+    {
+        file << "\t[REDClass(SerializeDefault = true)]" << std::endl;
+    }
     file << "\tpublic ";
 
     file << "partial class ";
@@ -289,18 +311,23 @@ void WolvenKitWriter::Write(CsClass aClass)
     }
 
     file << std::endl;
-    file << "\t{";
+    file << "\t{" << std::endl;
 
-    RED4ext::IScriptable* inst = nullptr;
+    RED4ext::ScriptInstance inst = nullptr;
     if (aClass.redName != "inkInputKeyIconManager")
     {
-        inst = GetDefaultInstance(aClass.raw);
+        inst = aClass.raw->AllocInstance();
+    }
+
+    if (aClass.redName == "ActionsSequencerControllerPS")
+    {
+        auto b = "";
     }
 
     std::vector<std::string> prop_lst;
     if (inst)
     {
-        GetPropertiesDefaults(&aClass, inst, &prop_lst);
+        GetPropertiesDefaults(&aClass, inst, &prop_lst, 0);
     }
 
     bool first = true;
@@ -315,37 +342,28 @@ void WolvenKitWriter::Write(CsClass aClass)
         Write(file, &prop);
     }
 
-    if (!prop_lst.empty())
+    if (!first)
     {
         file << std::endl;
+    }
 
-        file << "\t\tpublic " << aClass.csName << "()" << std::endl;
-        file << "\t\t{" << std::endl;
+    file << "\t\tpublic " << aClass.csName << "()" << std::endl;
+    file << "\t\t{" << std::endl;
 
+    if (!prop_lst.empty())
+    {
         for (auto ord : prop_lst)
         {
             file << "\t\t\t" + ord << std::endl;
         }
 
-        file << "\t\t}" << std::endl;
-    }
-
-    /* file << "\t\tprotected override OrdinalDict GetPropertyOrder()" << std::endl;
-    file << "\t\t{" << std::endl;
-    file << "\t\t\tvar dict = base.GetPropertyOrder();" << std::endl;
-    if (!ord_lst.empty())
-    {
         file << std::endl;
-
-        std::sort(ord_lst.begin(), ord_lst.end(), [](auto& left, auto& right) { return left.second < right.second; });
-        for (auto ord : ord_lst)
-        {
-            file << "\t\t\tdict.Add(nameof(" + ord.first + "), " + std::to_string(ord.second) + ");" << std::endl;
-        }
     }
+
+    file << "\t\t\tPostConstruct();" << std::endl;
+    file << "\t\t}" << std::endl;
     file << std::endl;
-    file << "\t\t\treturn dict;" << std::endl;
-    file << "\t\t}" << std::endl;*/
+    file << "\t\tpartial void PostConstruct();" << std::endl;
 
     file << "\t}" << std::endl;
     file << "}" << std::endl;

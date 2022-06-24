@@ -44,7 +44,7 @@ private:
 
     void GetCClassInfo(std::shared_ptr<Class> aClass);
     CsProperty GetCPropertyInfo(RED4ext::CProperty* aProperty, size_t aOrdinal);
-    void GetPropertiesDefaults(CsClass* aClass, RED4ext::IScriptable* aInstance, std::vector<std::string>* aPropertyValueList);
+    void GetPropertiesDefaults(CsClass* aClass, RED4ext::ScriptInstance aInstance, std::vector<std::string>* aPropertyValueList, int level = 0);
 
     void Write(CsClass aClass);
     void Write(std::fstream& aFile, CsProperty* aProperty);
