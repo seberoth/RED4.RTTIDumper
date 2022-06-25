@@ -15,6 +15,16 @@ class WolvenKitWriter : public IWriter
 
         std::string fixedSize;
         std::string csType;
+
+        std::string defaultValue;
+        std::string value;
+    };
+
+    struct CsPropertyValueHolder
+    {
+        RED4ext::CProperty* raw;
+        std::string defaultValue;
+        std::string value;
     };
 
     struct CsClass
@@ -24,9 +34,14 @@ class WolvenKitWriter : public IWriter
         std::string redName;
         std::string csName;
         std::string parentName;
+        bool serializeDefault = false;
 
+        bool hasEnumOrFlag = false;
         std::vector<CsProperty> properties;
         size_t nextOrdinal;
+
+        bool isValueListSet = false;
+        std::vector<std::pair<std::string, CsPropertyValueHolder>> propertiesValueList;
     };
 
 public:
@@ -44,18 +59,22 @@ private:
 
     void GetCClassInfo(std::shared_ptr<Class> aClass);
     CsProperty GetCPropertyInfo(RED4ext::CProperty* aProperty, size_t aOrdinal);
-    void GetPropertiesDefaults(CsClass* aClass, RED4ext::ScriptInstance aInstance, std::vector<std::string>* aPropertyValueList, int level = 0);
+
+    void GetPropertiesDefaults(CsClass* aClass, RED4ext::IScriptable* aInstance = nullptr);
 
     void Write(CsClass aClass);
-    void Write(std::fstream& aFile, CsProperty* aProperty);
+    void Write(std::fstream& aFile, CsProperty aProperty);
 
-    RED4ext::IScriptable* GetDefaultInstance(RED4ext::CClass* cls);
     std::string GetWolvenType(const char* aName);
     std::string GetFixedSize(RED4ext::CBaseRTTIType* aType);
 
     std::string GetCSType(RED4ext::CBaseRTTIType* aType);
-    std::string GetDefaultValues(RED4ext::CClass* aType, RED4ext::ScriptInstance* aInstance);
-    std::string GetDefaultValue(RED4ext::CBaseRTTIType* aType, RED4ext::ScriptInstance* aInstance, int level = 0);
+    bool ContainsEnum(RED4ext::CBaseRTTIType* aType);
+    std::string GetCSDefault(RED4ext::CBaseRTTIType* aType);
+
+    std::vector<std::string> GetDefaultValues(RED4ext::CClass* aType, RED4ext::ScriptInstance* aInstance);
+    std::string GetDefaultValue(RED4ext::CBaseRTTIType* aType, RED4ext::ScriptInstance* aInstance);
+
     size_t GetOrdinalStart(std::shared_ptr<Class> aClass);
 
     bool CheckForDuplicate(RED4ext::CClass* aClass, RED4ext::CProperty* aProperty);
