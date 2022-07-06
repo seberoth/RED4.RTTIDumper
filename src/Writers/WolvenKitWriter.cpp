@@ -992,7 +992,7 @@ std::string WolvenKitWriter::GetCSDefault(RED4ext::CBaseRTTIType* aType)
         }
         if (name == std::string("TweakDBID"))
         {
-            return "null";
+            return "0";
         }
         if (name == std::string("String"))
         {
