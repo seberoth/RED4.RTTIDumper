@@ -1252,7 +1252,7 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CBaseRTTIType* aType, RED4
         std::vector<std::string> valLst;
         for (uint32_t i = 0, n = carr->GetLength(aInstance); i < n; ++i)
         {
-            RED4ext::ScriptInstance* t1 = (RED4ext::ScriptInstance*)carr->GetValuePointer(aInstance, i);
+            RED4ext::ScriptInstance* t1 = (RED4ext::ScriptInstance*)carr->sub_E8(aInstance, i);
             auto innerValue = GetDefaultValue(inner, t1);
             if (!innerValue.empty())
             {
