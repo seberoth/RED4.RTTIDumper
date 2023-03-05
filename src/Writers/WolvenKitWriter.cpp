@@ -118,23 +118,23 @@ WolvenKitWriter::WolvenKitWriter(const std::filesystem::path& aRootDir)
 
     std::fstream newfile;
     newfile.open("C:\\Dev\\tweak.txt",std::ios::in);
-    if (newfile.is_open()){   //checking whether the file is open
+    if (newfile.is_open()){
       std::string tp;
-      while(getline(newfile, tp)){ //read data from file object and put it into string.
+      while(getline(newfile, tp)){
           auto tweak = new RED4ext::TweakDBID(tp);
           m_tweaks.emplace(tweak->value, tp);
       }
-      newfile.close(); //close the file object.
+      newfile.close();
    }
 
     newfile.open("C:\\Dev\\paths.txt",std::ios::in);
-    if (newfile.is_open()){   //checking whether the file is open
+    if (newfile.is_open()){
       std::string tp;
-      while(getline(newfile, tp)){ //read data from file object and put it into string.
+      while(getline(newfile, tp)){
           auto hash = RED4ext::FNV1a64(tp.c_str());
           m_paths.emplace(hash, tp);
       }
-      newfile.close(); //close the file object.
+      newfile.close();
    }
 }
 
