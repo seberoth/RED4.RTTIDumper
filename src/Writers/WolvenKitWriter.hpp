@@ -88,6 +88,8 @@ private:
 
     std::fstream m_enumWriter;
 
+    std::unordered_map<uint64_t, std::string> m_paths;
+    std::unordered_map<uint64_t, std::string> m_tweaks;
     std::unordered_map<std::string, size_t> m_customClasses;
     std::unordered_map<std::string, std::unordered_set<size_t>> m_skippedOrdinals;
     std::unordered_map<std::string, size_t> m_nextOrdinals;

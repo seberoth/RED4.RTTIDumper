@@ -115,6 +115,27 @@ WolvenKitWriter::WolvenKitWriter(const std::filesystem::path& aRootDir)
     m_skippedOrdinals.emplace("animFacialSetup", std::unordered_set<size_t>{8, 9});
     m_skippedOrdinals.emplace("animLipsyncMapping", std::unordered_set<size_t>{3});
     m_skippedOrdinals.emplace("worldNode", std::unordered_set<size_t>{0, 1});
+
+    std::fstream newfile;
+    newfile.open("C:\\Dev\\tweak.txt",std::ios::in);
+    if (newfile.is_open()){   //checking whether the file is open
+      std::string tp;
+      while(getline(newfile, tp)){ //read data from file object and put it into string.
+          auto tweak = new RED4ext::TweakDBID(tp);
+          m_tweaks.emplace(tweak->value, tp);
+      }
+      newfile.close(); //close the file object.
+   }
+
+    newfile.open("C:\\Dev\\paths.txt",std::ios::in);
+    if (newfile.is_open()){   //checking whether the file is open
+      std::string tp;
+      while(getline(newfile, tp)){ //read data from file object and put it into string.
+          auto hash = RED4ext::FNV1a64(tp.c_str());
+          m_paths.emplace(hash, tp);
+      }
+      newfile.close(); //close the file object.
+   }
 }
 
 void WolvenKitWriter::Write(Global& aGlobal)
@@ -212,6 +233,12 @@ WolvenKitWriter::CsProperty WolvenKitWriter::GetCPropertyInfo(RED4ext::CProperty
 
     info.ordinal = aOrdinal;
     info.redName = aProperty->name.ToString();
+
+    if (info.redName == "persistentNodes")
+    {
+        auto a = "";
+    }
+
     info.csType = GetCSType(aProperty->type);
     info.fixedSize = GetFixedSize(aProperty->type);
 
@@ -261,7 +288,7 @@ void WolvenKitWriter::GetPropertiesDefaults(CsClass* aClass, RED4ext::IScriptabl
         RED4ext::ScriptInstance instance = nullptr;
         if (aClass->redName != "inkInputKeyIconManager")
         {
-            instance = aClass->raw->AllocInstance();
+            instance = aClass->raw->CreateInstance();
         }
 
         if (hasParent)
@@ -1168,32 +1195,74 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CBaseRTTIType* aType, RED4
         else if (name == std::string("Int16"))
         {
             const auto value = *(int16_t*)aInstance;
-            return std::to_string(value);
+            auto strVal = std::to_string(value);
+            if (strVal == "32767")
+            {
+                return "short.MaxValue";
+            }
+            if (strVal == "-32768")
+            {
+                return "short.MinValue";
+            }
+            return strVal;
         }
         else if (name == std::string("Uint16"))
         {
             const auto value = *(uint16_t*)aInstance;
-            return std::to_string(value);
+            auto strVal = std::to_string(value);
+            if (strVal == "65535")
+            {
+                return "ushort.MaxValue";
+            }
+            return strVal;
         }
         else if (name == std::string("Int32"))
         {
             const auto value = *(int32_t*)aInstance;
-            return std::to_string(value);
+            auto strVal = std::to_string(value);
+            if (strVal == "2147483647")
+            {
+                return "int.MaxValue";
+            }
+            if (strVal == "-2147483648")
+            {
+                return "int.MinValue";
+            }
+            return strVal;
         }
         else if (name == std::string("Uint32"))
         {
             const auto value = *(uint32_t*)aInstance;
-            return std::to_string(value);
+            auto strVal = std::to_string(value);
+            if (strVal == "4294967295")
+            {
+                return "uint.MaxValue";
+            }
+            return strVal;
         }
         else if (name == std::string("Int64"))
         {
             const auto value = *(int64_t*)aInstance;
-            return std::to_string(value);
+            auto strVal = std::to_string(value);
+            if (strVal == "9223372036854775807")
+            {
+                return "long.MaxValue";
+            }
+            if (strVal == "-9223372036854775808")
+            {
+                return "long.MinValue";
+            }
+            return strVal;
         }
         else if (name == std::string("Uint64"))
         {
             const auto value = *(uint64_t*)aInstance;
-            return std::to_string(value);
+            auto strVal = std::to_string(value);
+            if (strVal == "18446744073709551615")
+            {
+                return "long.MaxValue";
+            }
+            return strVal;
         }
         else if (name == std::string("Float"))
         {
@@ -1202,7 +1271,18 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CBaseRTTIType* aType, RED4
             {
                 return "float.PositiveInfinity";
             }
-            return std::to_string(value) + "F";
+
+            auto strVal = std::to_string(value) + "F";
+            if (strVal == "340282346638528859811704183484516925440.000000F")
+            {
+                return "float.MaxValue";
+            }
+            if (strVal == "-340282346638528859811704183484516925440.000000F")
+            {
+                return "float.MinValue";
+            }
+
+            return strVal;
         }
         else if (name == std::string("Double"))
         {
@@ -1214,24 +1294,28 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CBaseRTTIType* aType, RED4
     }
     case RED4ext::ERTTIType::Class:
     {
-        auto valLst = GetDefaultValues((RED4ext::CClass*)aType, aInstance);
+        auto clsType = (RED4ext::CClass*)aType;
 
-        std::string result = "new()";
+        auto redName = clsType->name.ToString();
+        auto valLst = GetDefaultValues(clsType, aInstance);
+
+        std::string result = "new " + GetWolvenType(redName);
 
         if (!valLst.empty())
         {
             result += " {";
-        }
 
-        for (auto val : valLst)
-        {
-            result += " " + val + ",";
-        }
+            for (auto val : valLst)
+            {
+                result += " " + val + ",";
+            }
 
-        if (!valLst.empty())
-        {
             result = result.substr(0, result.size() - 1);
             result += " }";
+        }
+        else
+        {
+            result += "()";
         }
 
         return result;
@@ -1243,6 +1327,10 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CBaseRTTIType* aType, RED4
         auto innerName = inner->GetName().ToString();
         auto length = carr->GetLength(aInstance);
         if (length == 0)
+        {
+            return "new()";
+        }
+        if (length > 1000)
         {
             return "new()";
         }
@@ -1304,6 +1392,11 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CBaseRTTIType* aType, RED4
             const auto var = *(RED4ext::TweakDBID*)aInstance;
             if (var.value != 0)
             {
+                auto a = m_tweaks.find(var.value);
+                if (a != m_tweaks.end())
+                {
+                    return "\"" + a->second + "\"";
+                }
                 return std::to_string(var.value);
             }
             return GetCSDefault(aType);
@@ -1323,6 +1416,8 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CBaseRTTIType* aType, RED4
         {
             // TODO
             auto var = (RED4ext::Variant*)aInstance;
+            auto c = var->GetType();
+            auto d = var->GetDataPtr();
             return GetCSDefault(aType);
         }
         else if (name == std::string("CRUID"))
@@ -1342,9 +1437,16 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CBaseRTTIType* aType, RED4
             const auto value = *(RED4ext::DataBuffer*)aInstance;
             return GetCSDefault(aType);
         }
+        else if (name == std::string("SharedDataBuffer"))
+        {
+            // TODO
+            const auto value = *(RED4ext::SharedDataBuffer*)aInstance;
+            return GetCSDefault(aType);
+        }
         else if (name == std::string("serializationDeferredDataBuffer"))
         {
             // TODO
+            const auto value = *(RED4ext::DeferredDataBuffer*)aInstance;
             return GetCSDefault(aType);
         }
         else if (name == std::string("multiChannelCurve:Float"))
@@ -1356,6 +1458,16 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CBaseRTTIType* aType, RED4
         else if (name == std::string("CDateTime"))
         {
             const auto var = *(RED4ext::CDateTime*)aInstance;
+            return std::to_string(var.unk00);
+        }
+        else if (name == std::string("EditorObjectID"))
+        {
+            const auto var = *(RED4ext::EditorObjectID*)aInstance;
+            return std::to_string(var.unk00);
+        }
+        else if (name == std::string("MessageResourcePath"))
+        {
+            const auto var = *(RED4ext::MessageResourcePath*)aInstance;
             return std::to_string(var.unk00);
         }
 
@@ -1417,6 +1529,29 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CBaseRTTIType* aType, RED4
 
                 return "Enums." + std::string(name) + "." + valName;
             }
+        }
+
+        for (uint32_t i = 0; i < ce->hashList.size; i++)
+        {
+            size_t enumValue;
+            if (size == 1)
+            {
+                enumValue = (uint8_t)ce->valueList[i];
+            }
+            else if (size == 2)
+            {
+                enumValue = (uint16_t)ce->valueList[i];
+            }
+            else if (size == 4)
+            {
+                enumValue = (uint32_t)ce->valueList[i];
+            }
+            else if (size == 8)
+            {
+                enumValue = (uint64_t)ce->valueList[i];
+            }
+
+            auto d = "";
         }
 
         break;
@@ -1507,18 +1642,58 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CBaseRTTIType* aType, RED4
                 auto innerValue = GetDefaultValue(inner_type, (RED4ext::ScriptInstance*)ptr);
                 auto tmp = "";
             }
+            else
+            {
+                auto c = inner_type->GetType();
+            }
         }
 
         return GetCSDefault(aType);
     }
     case RED4ext::ERTTIType::ResourceReference:
     {
+        const auto var = (RED4ext::ResourceReference<>*)aInstance;
+
+        if (var->path.hash != 0)
+        {
+            std::string result = "new CResourceReference<CResource>(";
+
+            auto a = m_paths.find(var->path.hash);
+            if (a != m_paths.end())
+            {
+                result += "@\"" + a->second + "\"";
+            } else
+            {
+                result += std::to_string(var->path.hash);
+            }
+
+            result += ")";
+
+            return result;
+        }
         return GetCSDefault(aType);
     }
     case RED4ext::ERTTIType::ResourceAsyncReference:
     {
-        auto value = *(uint64_t*)aInstance;
+        const auto var = (RED4ext::ResourceAsyncReference<>*)aInstance;
 
+        if (var->path.hash != 0)
+        {
+            std::string result = "new CResourceAsyncReference<CResource>(";
+
+            auto a = m_paths.find(var->path.hash);
+            if (a != m_paths.end())
+            {
+                result += "@\"" + a->second + "\"";
+            } else
+            {
+                result += std::to_string(var->path.hash);
+            }
+
+            result += ")";
+
+            return result;
+        }
         return GetCSDefault(aType);
     }
     case RED4ext::ERTTIType::BitField:
