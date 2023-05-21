@@ -119,23 +119,23 @@ WolvenKitWriter::WolvenKitWriter(const std::filesystem::path& aRootDir)
     std::fstream newfile;
     newfile.open("C:\\Dev\\tweak.txt",std::ios::in);
     if (newfile.is_open()){
-      std::string tp;
+        std::string tp;
       while(getline(newfile, tp)){
-          auto tweak = new RED4ext::TweakDBID(tp);
-          m_tweaks.emplace(tweak->value, tp);
-      }
-      newfile.close();
-   }
+            auto tweak = new RED4ext::TweakDBID(tp);
+            m_tweaks.emplace(tweak->value, tp);
+        }
+        newfile.close();
+    }
 
     newfile.open("C:\\Dev\\paths.txt",std::ios::in);
     if (newfile.is_open()){
-      std::string tp;
+        std::string tp;
       while(getline(newfile, tp)){
-          auto hash = RED4ext::FNV1a64(tp.c_str());
-          m_paths.emplace(hash, tp);
-      }
-      newfile.close();
-   }
+            auto hash = RED4ext::FNV1a64(tp.c_str());
+            m_paths.emplace(hash, tp);
+        }
+        newfile.close();
+    }
 }
 
 void WolvenKitWriter::Write(Global& aGlobal)
@@ -398,7 +398,12 @@ void WolvenKitWriter::Write(CsClass aClass)
     {
         file << "\t[RED(\"" << aClass.redName << "\")]" << std::endl;
     }
-    file << "\tpublic partial class ";
+    file << "\tpublic ";
+    if (aClass.raw->flags.isAbstract)
+    {
+        file << "abstract ";
+    }
+    file << "partial class ";
 
     file << aClass.csName << " : ";
     if (!aClass.parentName.empty())
@@ -495,17 +500,17 @@ void WolvenKitWriter::Write(std::shared_ptr<Enum> aEnum)
     {
     case sizeof(int8_t):
     {
-         m_enumWriter << " : byte";
-         break;
+        m_enumWriter << " : byte";
+        break;
     }
     case sizeof(int16_t):
     {
-         m_enumWriter << " : ushort";
-         break;
+        m_enumWriter << " : ushort";
+        break;
     }
     case sizeof(int32_t):
     {
-         break;
+        break;
     }
     case sizeof(int64_t):
     {
@@ -1087,9 +1092,9 @@ std::string WolvenKitWriter::GetCSDefault(RED4ext::CBaseRTTIType* aType)
     case ERTTIType::WeakHandle:
         return "null";
     case ERTTIType::ResourceReference:
-        return "null";
+        return "new " + GetCSType(aType) + "()";
     case ERTTIType::ResourceAsyncReference:
-        return "null";
+        return "new " + GetCSType(aType) + "()";
     case ERTTIType::BitField:
         return "0";
     case ERTTIType::LegacySingleChannelCurve:
@@ -1375,7 +1380,7 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CBaseRTTIType* aType, RED4
         {
             // TODO:
             const auto value = *(RED4ext::NodeRef*)aInstance;
-            if (value.unk00 != 0)
+            if (value.hash != 0)
             {
                 auto tmp = "";
             }
