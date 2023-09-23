@@ -116,7 +116,7 @@ WolvenKitWriter::WolvenKitWriter(const std::filesystem::path& aRootDir)
     m_skippedOrdinals.emplace("animLipsyncMapping", std::unordered_set<size_t>{3});
     m_skippedOrdinals.emplace("worldNode", std::unordered_set<size_t>{0, 1});
 
-    std::fstream newfile;
+    /*std::fstream newfile;
     newfile.open("C:\\Dev\\tweak.txt",std::ios::in);
     if (newfile.is_open()){
         std::string tp;
@@ -135,7 +135,7 @@ WolvenKitWriter::WolvenKitWriter(const std::filesystem::path& aRootDir)
             m_paths.emplace(hash, tp);
         }
         newfile.close();
-    }
+    }*/
 }
 
 void WolvenKitWriter::Write(Global& aGlobal)
@@ -1345,7 +1345,7 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CBaseRTTIType* aType, RED4
         std::vector<std::string> valLst;
         for (uint32_t i = 0, n = carr->GetLength(aInstance); i < n; ++i)
         {
-            RED4ext::ScriptInstance* t1 = (RED4ext::ScriptInstance*)carr->sub_E8(aInstance, i);
+            RED4ext::ScriptInstance* t1 = (RED4ext::ScriptInstance*)carr->GetElement(aInstance, i);
             auto innerValue = GetDefaultValue(inner, t1);
             if (!innerValue.empty())
             {
@@ -1633,7 +1633,7 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CBaseRTTIType* aType, RED4
     case RED4ext::ERTTIType::Handle:
     case RED4ext::ERTTIType::WeakHandle:
     {
-        auto ptr = *(uint64_t*)aInstance;
+        /*auto ptr = *(uint64_t*)aInstance;
         if (ptr)
         {
             struct HandleType : RED4ext::CBaseRTTIType
@@ -1651,7 +1651,7 @@ std::string WolvenKitWriter::GetDefaultValue(RED4ext::CBaseRTTIType* aType, RED4
             {
                 auto c = inner_type->GetType();
             }
-        }
+        }*/
 
         return GetCSDefault(aType);
     }
